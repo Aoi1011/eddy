@@ -110,6 +110,10 @@ impl Node<(), Payload, InjectedPayload> for BroadcastNode {
                 let mut reply = input.into_reply(Some(&mut self.id));
                 match reply.body.payload {
                     Payload::Gossip { seen } => {
+                        self.known
+                            .get_mut(&reply.dst)
+                            .expect("got gossip message from unknown node")
+                            .extend(seen.iter().copied());
                         self.messages.extend(seen);
                     }
                     Payload::Broadcast { message } => {

@@ -1,11 +1,12 @@
 use std::{
     collections::{HashMap, HashSet},
-    io::{StdoutLock, Write},
+    io::StdoutLock,
     time::Duration,
 };
 
 use anyhow::Context;
 use eddy::*;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +40,6 @@ struct BroadcastNode {
     messages: HashSet<usize>,
     known: HashMap<String, HashSet<usize>>,
     neighborhood: Vec<String>,
-    msg_communicated: HashMap<usize, HashSet<usize>>,
 }
 
 impl Node<(), Payload, InjectedPayload> for BroadcastNode {
@@ -70,7 +70,6 @@ impl Node<(), Payload, InjectedPayload> for BroadcastNode {
                 .map(|nid| (nid, HashSet::new()))
                 .collect(),
             neighborhood: Vec::new(),
-            msg_communicated: HashMap::new(),
         })
     }
 
@@ -85,6 +84,20 @@ impl Node<(), Payload, InjectedPayload> for BroadcastNode {
                 InjectedPayload::Gossip => {
                     for n in self.neighborhood.iter() {
                         let known_to_n = &self.known[n];
+                        let (already_known, mut notify_of): (HashSet<_>, HashSet<_>) = self
+                            .messages
+                            .iter()
+                            .copied()
+                            .partition(|m| known_to_n.contains(m));
+                        let mut rng = rand::thread_rng();
+                        let additional_cap = (10 * notify_of.len() / 100) as u32;
+                        notify_of.extend(already_known.iter().filter(|_| {
+                            rng.gen_ratio(
+                                additional_cap.min(already_known.len() as u32),
+                                already_known.len() as u32,
+                            )
+                        }));
+
                         Message {
                             src: self.node.clone(),
                             dst: n.clone(),
@@ -110,6 +123,10 @@ impl Node<(), Payload, InjectedPayload> for BroadcastNode {
                 let mut reply = input.into_reply(Some(&mut self.id));
                 match reply.body.payload {
                     Payload::Gossip { seen } => {
+                        self.known
+                            .get_mut(&reply.dst)
+                            .expect("got gossip message from unknown node")
+                            .extend(seen.iter().copied());
                         self.messages.extend(seen);
                     }
                     Payload::Broadcast { message } => {
